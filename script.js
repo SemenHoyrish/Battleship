@@ -22,9 +22,11 @@ BODY.style.height = HEIGHT.toString() + "px";
 
 // game.removeGameObject(btn);
 
-document.onkeydown = (e) => {
-    if (e.code == "KeyQ") game.end();
-}
+// document.onkeydown = (e) => {
+//     if (e.code == "KeyQ") game.end();
+// }
+
+let socket = null;
 
 let field = [
 ];
@@ -41,27 +43,22 @@ for (let i = 0; i < 10; i++) {
 for (let i = 0; i < 10; i++) {
     let row = [];
     for (let j = 0; j < 10; j++)
-        row.push(0);
+        row.push(-1);
     playerFieldShots.push(row);
 }
 for (let i = 0; i < 10; i++) {
     let row = [];
     for (let j = 0; j < 10; j++)
-        row.push(0);
+        row.push(-1);
     enemyFieldShots.push(row);
 }
 // console.log(field);
 
 let player = 0;
 let playerTurn = false;
+let shotResult = -1;
 
 let game_id = 0;
-
-const socket = new WebSocket('ws://localhost:8090');
-
-socket.addEventListener('open', function (event) {
-    socket.send( JSON.stringify({"action": 'create_game'}));
-});
 
 const States = {
     "error": -1,
@@ -70,107 +67,19 @@ const States = {
     // "sendField": 2,
     "getTurn": 3,
     "checkTurn": 4,
+    "waitShotResult": 5,
+    "waitShot": 6,
 }
 let state = States.connect;
 const STATUS_SUCCESS = "success";
 const STATUS_ERROR = "error";
-socket.addEventListener('message', function (event) {
-    let res = JSON.parse(event.data);
-    console.log(state);
-    console.log(res);
-    if (res.status == STATUS_ERROR) {
-        state = States.error;
-        console.error("Server send ERROR!");
-        return;
-    }
-    switch (state) {
-        case States.connect:
-            socket.send( JSON.stringify({
-                "action": "connect",
-                "game_id": game_id
-            }));
-            state = States.connecting;
-            break;
-        
-        case States.connecting:
-            player = res.message;
-            fillField();
-            // socket.send( JSON.stringify({
-            //     "action": "send_field",
-            //     "game_id": game_id,
-            //     "player": player,
-            //     "field": field
-            // }));
-            // state = States.getTurn;
-            break;
-
-        case States.getTurn:
-            socket.send( JSON.stringify({
-                "action": "get_turn",
-                "game_id": game_id
-            }));
-            state = States.checkTurn;
-            break;
-
-        case States.checkTurn:
-            const turn = res.message;
-            if (turn == player) {
-                playerTurn = true;
-                state = States.waitShotResult;
-            }
-            else {
-                playerTurn = false;
-                state = States.waitShot;
-            }
-            break;
-
-        case States.waitShotResult:
-            if (res.message == 1) {
-                enemyFieldShots[x][y] = 1;
-                console.log("NS!");
-                state = States.waitShotResult;
-            } else {
-                playerTurn = false;
-                enemyFieldShots[x][y] = 0;
-                console.log("MISS!");
-                state = States.waitShot;
-            }
-            break;
-
-        case States.waitShot:
-            const x = res.message.x;
-            const y = res.message.y;
-            playerFieldShots[y][x] = field[y][x] == 1 ? 1 : 0;
-            if (field[y][x] == 1) {
-                state = States.waitShot;
-            } else {
-                state = States.waitShotResult;
-                playerTurn = true;
-            }
-            break;
-    
-        default:
-            break;
-    }
-    // let res = JSON.parse(event.data);
-    // console.log(res);
-    // if (res.status == "success") {
-    //     console.log("_1");
-    //     socket.send(JSON.stringify({
-    //         "action": "send_field",
-    //         "field": field,
-    //         "id": 2,
-    //         "player": 1
-    //     }));
-    // } else if (res.status == "error") {
-    //     console.log("_2");
-    //     console.log(res.message);
-    //     // socket.send(JSON.stringify(field));
-    // }
-});
 
 
+let shotReloading = false;
+let lastShotX = -1;
+let lastShotY = -1;
 
+let fight_started = false;
 
 
 // field[3][5] = 1;
@@ -185,7 +94,8 @@ const COLORS = {
     "hover": "#c4c4c4",
     "preview": "#e38b59",
     "fire": "#db0707",
-    "flooded": "#300000"
+    "flooded": "#300000",
+    "miss": "#95b0c2"
 };
 const CELL_SIZE = 50;
 
@@ -384,3 +294,254 @@ const fillField = () => {
         // console.log("updated");
     }
 };
+
+const fight = () => {
+    fight_started = true;
+
+    const game = initGame(WIDTH, HEIGHT, CANVAS, FPS);
+    let frames = 0;
+
+    let last_frame = 0;
+    game.update = () => {
+    
+        game.removeAllGameObjects();
+    
+        let time = new Date().getTime() - last_frame;
+        last_frame = new Date().getTime();
+        
+        game.createText(60, 10, "const FPS: " + FPS.toString());
+        game.createText(180, 10, "actual FPS: " + (1000 / time).toFixed(2).toString());
+        game.createText(320, 10, "FramesRendered: " + frames.toString());
+    
+        for (let y = 0; y < 10; y++) {
+            for (let x = 0; x < 10; x++) {
+                let color = COLORS.sea;
+                if (field[y][x] == 1) color = COLORS.ship;
+                if (field[y][x] == -1) color = COLORS.blocked;
+                if (field[y][x] == 2) color = COLORS.preview;
+
+                if (playerFieldShots[y][x] == 0) color = COLORS.miss + Math.round(0.3 * 255).toString(16);
+                if (playerFieldShots[y][x] == 1) color = COLORS.fire + Math.round(0.3 * 255).toString(16);
+
+                const obj = game.createGameObject(CELL_SIZE + (CELL_SIZE + 1) * x, CELL_SIZE + (CELL_SIZE + 1) * y, CELL_SIZE, CELL_SIZE, color);
+                // game.createGameObjectClickHandler(obj, () => {
+                //     if (shipPreviewType != -1) placeShip(x, y, shipPreviewType, shipRotated);
+                // });
+                // if (field[y][x] != 1 && game.isMouseOverGameObject(obj)) {
+                //     if (shipPreviewType == -1)
+                //         obj.color = COLORS.hover;
+                //     else {
+                //         clearShipPreviw();
+                //         shipPreview(x, y, shipPreviewType, shipRotated);
+                //     }
+                // }
+            }
+        }
+
+        const offset = CELL_SIZE + (CELL_SIZE + 1) * 10;
+        for (let y = 0; y < 10; y++) {
+            for (let x = 0; x < 10; x++) {
+                let color = COLORS.sea;
+                // if (field[y][x] == 1) color = COLORS.ship;
+                // if (field[y][x] == -1) color = COLORS.blocked;
+                // if (field[y][x] == 2) color = COLORS.preview;
+                if (enemyFieldShots[y][x] == 0) color = COLORS.miss;
+                if (enemyFieldShots[y][x] == 1) color = COLORS.fire;
+
+                const obj = game.createGameObject(offset + CELL_SIZE + (CELL_SIZE + 1) * x, CELL_SIZE + (CELL_SIZE + 1) * y, CELL_SIZE, CELL_SIZE, color);
+                if (playerTurn && !shotReloading) {
+                    game.createGameObjectClickHandler(obj, () => {
+                        lastShotX = x;
+                        lastShotY = y;
+                        socket.send(JSON.stringify({
+                            "action": "shot",
+                            "game_id": game_id,
+                            "player": player,
+                            "x": x,
+                            "y": y
+                        }));
+                        state = States.waitShotResult;
+                        shotReloading = true;
+                    });
+                    if (enemyFieldShots[y][x] == -1 && game.isMouseOverGameObject(obj)) {
+                        obj.color = COLORS.hover;
+                    }
+                }
+            }
+        }
+
+        if (playerTurn)
+            game.createText(550, CELL_SIZE + (CELL_SIZE + 1) * 10, "Your turn", 30);
+        else
+            game.createText(550, CELL_SIZE + (CELL_SIZE + 1) * 10, "Enemy turn", 30);
+    
+        // const btns_offset = CELL_SIZE + (CELL_SIZE + 1) * 10 + 10;
+        // game.createButton(315, btns_offset, 180, 50, "ROTATE", () => {shipRotated = !shipRotated}, 30);
+        // game.createButton(315 + 150, btns_offset, 90, 50, "GO", () => {
+        //     socket.send( JSON.stringify({
+        //         "action": "send_field",
+        //         "game_id": game_id,
+        //         "player": player,
+        //         "field": field
+        //     }));
+        //     state = States.getTurn;
+        //     game.removeAllGameObjects();
+        //     game.end();
+        //     game.clearCanvas();
+        //     return;
+        // }, 30);
+
+        // game.createButton(115, btns_offset, 180, 50, "SHIP 1X", () => {shipPreviewType = 1}, 30);
+        // game.createButton(115, btns_offset + 60, 180, 50, "SHIP 2X", () => {shipPreviewType = 2}, 30);
+        // game.createButton(115, btns_offset + 120, 180, 50, "SHIP 3X", () => {shipPreviewType = 3}, 30);
+        // game.createButton(115, btns_offset + 180, 180, 50, "SHIP 4X", () => {shipPreviewType = 4}, 30);
+    
+        // if (!shipRotated) {
+        //     game.createGameObject(315 - CELL_SIZE - 1, btns_offset + 60, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        //     game.createGameObject(315, btns_offset + 60, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        //     game.createGameObject(315 + CELL_SIZE + 1, btns_offset + 60, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        // } else {
+        //     game.createGameObject(315, btns_offset + 60, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        //     game.createGameObject(315, btns_offset + 60 + CELL_SIZE + 1, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        //     game.createGameObject(315, btns_offset + 60 + CELL_SIZE * 2 + 2, CELL_SIZE, CELL_SIZE, COLORS.ship);
+        // }
+    
+    
+        frames++;
+        // console.log("updated");
+    }
+};
+
+const init_websocket = () => {
+    socket = new WebSocket('ws://localhost:8090');
+
+    socket.addEventListener('open', function (event) {
+        // socket.send( JSON.stringify({"action": 'create_game'}));
+        socket.send( JSON.stringify({"action": "HELLO"}));
+    });
+
+    socket.addEventListener('message', function (event) {
+        let res = JSON.parse(event.data);
+        console.log(state);
+        console.log(res);
+        if (res.status == STATUS_ERROR) {
+            state = States.error;
+            console.error("Server send ERROR!");
+            return;
+        }
+        switch (state) {
+            case States.connect:
+                socket.send( JSON.stringify({
+                    "action": "connect",
+                    "game_id": game_id
+                }));
+                state = States.connecting;
+                break;
+            
+            case States.connecting:
+                player = res.message;
+                fillField();
+                // socket.send( JSON.stringify({
+                //     "action": "send_field",
+                //     "game_id": game_id,
+                //     "player": player,
+                //     "field": field
+                // }));
+                // state = States.getTurn;
+                break;
+    
+            case States.getTurn:
+                socket.send( JSON.stringify({
+                    "action": "get_turn",
+                    "game_id": game_id
+                }));
+                state = States.checkTurn;
+                break;
+    
+            case States.checkTurn:
+                const turn = res.message;
+                if (turn == player) {
+                    playerTurn = true;
+                    state = States.waitShotResult;
+                }
+                else {
+                    playerTurn = false;
+                    state = States.waitShot;
+                    socket.send( JSON.stringify({
+                        "action": "get_shots",
+                        "game_id": game_id,
+                        "player": player
+                    }));
+                }
+                if (!fight_started) fight();
+                break;
+    
+            case States.waitShotResult:
+                shotReloading = false;
+                if (res.message == 1) {
+                    enemyFieldShots[lastShotY][lastShotX] = 1;
+                    console.log("NS!");
+                    shotResult = 1;
+                    state = States.waitShotResult;
+                } else {
+                    playerTurn = false;
+                    enemyFieldShots[lastShotY][lastShotX] = 0;
+                    console.log("MISS!");
+                    shotResult = 0;
+                    state = States.waitShot;
+                    socket.send( JSON.stringify({
+                        "action": "get_shots",
+                        "game_id": game_id,
+                        "player": player
+                    }));
+                }
+                break;
+    
+            case States.waitShot:
+                // const x = res.message.x;
+                // const y = res.message.y;
+                // playerFieldShots[y][x] = field[y][x] == 1 ? 1 : 0;
+                playerFieldShots = res.message;
+                socket.send( JSON.stringify({
+                    "action": "get_turn",
+                    "game_id": game_id
+                }));
+                state = States.checkTurn;
+                // if (field[y][x] == 1) {
+                //     state = States.waitShot;
+                //     socket.send( JSON.stringify({
+                //         "action": "get_shots",
+                //         "game_id": game_id,
+                //         "player": player
+                //     }));
+                // } else {
+                //     state = States.waitShotResult;
+                //     playerTurn = true;
+                // }
+                break;
+        
+            default:
+                break;
+        }
+        // let res = JSON.parse(event.data);
+        // console.log(res);
+        // if (res.status == "success") {
+        //     console.log("_1");
+        //     socket.send(JSON.stringify({
+        //         "action": "send_field",
+        //         "field": field,
+        //         "id": 2,
+        //         "player": 1
+        //     }));
+        // } else if (res.status == "error") {
+        //     console.log("_2");
+        //     console.log(res.message);
+        //     // socket.send(JSON.stringify(field));
+        // }
+    });
+}
+
+init_websocket();
+
+// playerTurn = true;
+// fight();
