@@ -159,6 +159,13 @@ async def game(websocket):
         elif request["action"] == "create_game":
             games.append(Game())
             await websocket.send(success(len(games) - 1))
+        elif request["action"] == "get_games":
+            res = []
+            for id, game in enumerate(games):
+                if (game.game_ended == False
+                   and (not game.player_one_connected or not game.player_two_connected)):
+                    res.append({"id": id, "connected": int(game.player_one_connected) + int(game.player_two_connected)})
+            await websocket.send(success(res))
         elif request["action"] == "connect":
             game_id = request["game_id"]
             if not games[game_id].player_one_connected:

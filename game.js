@@ -221,6 +221,10 @@ const fillField = () => {
         const btns_offset = CELL_SIZE + (CELL_SIZE + 1) * 10 + 10;
         game.createButton(315, btns_offset, 180, 50, "ROTATE", () => {shipRotated = !shipRotated}, 30);
         game.createButton(315 + 150, btns_offset, 90, 50, "GO", () => {
+            let r = 0;
+            shipsPlaced.forEach(i => {r += i;});
+            if (r != 10) return; 
+            
             socket.send( JSON.stringify({
                 "action": "send_field",
                 "game_id": game_id,
