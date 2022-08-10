@@ -1,6 +1,4 @@
 const FPS = 30;
-// const FPS = 60;
-// const FPS = 10;
 const WIDTH = window.innerWidth;
 const HEIGHT = window.innerHeight;
 const CANVAS = document.querySelector('canvas');
@@ -9,23 +7,6 @@ const BODY = document.querySelector('body');
 BODY.style.width = WIDTH.toString() + "px";
 BODY.style.height = HEIGHT.toString() + "px";
 
-
-
-
-// game.createGameObject(40, 60, 200, 100);
-// const btn = game.createButton(500, 500, 200, 100, "click me", () => {
-//     game.createGameObject(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, "rgba(54, 168, 2, 0.3)");
-//     console.log("clicked");
-// }, 48, "#c4c4c4", "red");
-
-// game.createText(500, 500, "HELLO", 48);
-
-// game.removeGameObject(btn);
-
-// document.onkeydown = (e) => {
-//     if (e.code == "KeyQ") game.end();
-// }
-
 let socket = null;
 
 let field = [
@@ -33,26 +14,6 @@ let field = [
 
 let playerFieldShots = [];
 let enemyFieldShots = [];
-
-for (let i = 0; i < 10; i++) {
-    let row = [];
-    for (let j = 0; j < 10; j++)
-        row.push(0);
-    field.push(row);
-}
-for (let i = 0; i < 10; i++) {
-    let row = [];
-    for (let j = 0; j < 10; j++)
-        row.push(-1);
-    playerFieldShots.push(row);
-}
-for (let i = 0; i < 10; i++) {
-    let row = [];
-    for (let j = 0; j < 10; j++)
-        row.push(-1);
-    enemyFieldShots.push(row);
-}
-// console.log(field);
 
 let player = 0;
 let playerTurn = false;
@@ -69,6 +30,7 @@ const States = {
     "checkTurn": 4,
     "waitShotResult": 5,
     "waitShot": 6,
+    "waitEnemy": 7
 }
 let state = States.connect;
 const STATUS_SUCCESS = "success";
@@ -81,11 +43,8 @@ let lastShotY = -1;
 
 let fight_started = false;
 
-
-// field[3][5] = 1;
-// field[4][5] = 1;
-// field[7][5] = 1;
-// field[3][7] = 1;
+let winner = 0;
+let game_ended = false;
 
 const COLORS = {
     "sea": "#00cbd6",
@@ -94,9 +53,10 @@ const COLORS = {
     "hover": "#c4c4c4",
     "preview": "#e38b59",
     "fire": "#db0707",
-    "flooded": "#300000",
+    "flooded": "#300000", //#2b2b2b
     "miss": "#95b0c2"
 };
+
 const CELL_SIZE = 50;
 
 const fillField = () => {
@@ -267,7 +227,7 @@ const fillField = () => {
                 "player": player,
                 "field": field
             }));
-            state = States.getTurn;
+            state = States.waitEnemy;
             game.removeAllGameObjects();
             game.end();
             game.clearCanvas();
@@ -295,6 +255,7 @@ const fillField = () => {
     }
 };
 
+let isWaitingEnemy = false;
 const fight = () => {
     fight_started = true;
 
@@ -302,9 +263,29 @@ const fight = () => {
     let frames = 0;
 
     let last_frame = 0;
+    let end_game = false;
     game.update = () => {
-    
+        if (end_game) game.end();
+
         game.removeAllGameObjects();
+
+        if (isWaitingEnemy) {
+            game.createText(WIDTH / 2, 200, "Waiting enemy!", 40);
+            return;
+        }
+
+        if (game_ended) {
+            console.log("ENDED");
+            console.log("RES: ", player == winner);
+            if (player == winner) {
+                game.createText(WIDTH / 2, 200, "WIN!", 40);
+            } else {
+                game.createText(WIDTH / 2, 200, "LOSE!", 40);
+            }
+            end_game = true;
+            return;
+        }
+
     
         let time = new Date().getTime() - last_frame;
         last_frame = new Date().getTime();
@@ -317,11 +298,12 @@ const fight = () => {
             for (let x = 0; x < 10; x++) {
                 let color = COLORS.sea;
                 if (field[y][x] == 1) color = COLORS.ship;
-                if (field[y][x] == -1) color = COLORS.blocked;
-                if (field[y][x] == 2) color = COLORS.preview;
+                // if (field[y][x] == -1) color = COLORS.blocked;
+                // if (field[y][x] == 2) color = COLORS.preview;
 
-                if (playerFieldShots[y][x] == 0) color = COLORS.miss + Math.round(0.3 * 255).toString(16);
-                if (playerFieldShots[y][x] == 1) color = COLORS.fire + Math.round(0.3 * 255).toString(16);
+                if (playerFieldShots[y][x] == 0) color = COLORS.miss;// + Math.round(0.3 * 255).toString(16);
+                if (playerFieldShots[y][x] == 1) color = COLORS.fire;// + Math.round(0.3 * 255).toString(16);
+                if (playerFieldShots[y][x] == 2) color = COLORS.flooded;
 
                 const obj = game.createGameObject(CELL_SIZE + (CELL_SIZE + 1) * x, CELL_SIZE + (CELL_SIZE + 1) * y, CELL_SIZE, CELL_SIZE, color);
                 // game.createGameObjectClickHandler(obj, () => {
@@ -347,9 +329,10 @@ const fight = () => {
                 // if (field[y][x] == 2) color = COLORS.preview;
                 if (enemyFieldShots[y][x] == 0) color = COLORS.miss;
                 if (enemyFieldShots[y][x] == 1) color = COLORS.fire;
+                if (enemyFieldShots[y][x] == 2) color = COLORS.flooded;
 
                 const obj = game.createGameObject(offset + CELL_SIZE + (CELL_SIZE + 1) * x, CELL_SIZE + (CELL_SIZE + 1) * y, CELL_SIZE, CELL_SIZE, color);
-                if (playerTurn && !shotReloading) {
+                if (playerTurn && !shotReloading && enemyFieldShots[y][x] == -1) {
                     game.createGameObjectClickHandler(obj, () => {
                         lastShotX = x;
                         lastShotY = y;
@@ -449,6 +432,17 @@ const init_websocket = () => {
                 // }));
                 // state = States.getTurn;
                 break;
+
+            case States.waitEnemy:
+                socket.send( JSON.stringify({
+                    "action": "wait_enemy",
+                    "game_id": game_id,
+                    "player": player,
+                }));
+                state = States.getTurn;
+                isWaitingEnemy = true;
+                if (!fight_started) fight();
+                break;
     
             case States.getTurn:
                 socket.send( JSON.stringify({
@@ -456,10 +450,13 @@ const init_websocket = () => {
                     "game_id": game_id
                 }));
                 state = States.checkTurn;
+                isWaitingEnemy = false;
                 break;
     
             case States.checkTurn:
-                const turn = res.message;
+                winner = res.message.winner;
+                game_ended = res.message.game_ended;
+                const turn = res.message.turn;
                 if (turn == player) {
                     playerTurn = true;
                     state = States.waitShotResult;
@@ -473,19 +470,20 @@ const init_websocket = () => {
                         "player": player
                     }));
                 }
-                if (!fight_started) fight();
                 break;
     
             case States.waitShotResult:
                 shotReloading = false;
-                if (res.message == 1) {
-                    enemyFieldShots[lastShotY][lastShotX] = 1;
+                if (res.message.result == 1) {
+                    // enemyFieldShots[lastShotY][lastShotX] = 1;
+                    enemyFieldShots = res.message.shots;
                     console.log("NS!");
                     shotResult = 1;
                     state = States.waitShotResult;
                 } else {
                     playerTurn = false;
-                    enemyFieldShots[lastShotY][lastShotX] = 0;
+                    // enemyFieldShots[lastShotY][lastShotX] = 0;
+                    enemyFieldShots = res.message.shots;
                     console.log("MISS!");
                     shotResult = 0;
                     state = States.waitShot;
@@ -539,9 +537,54 @@ const init_websocket = () => {
         //     // socket.send(JSON.stringify(field));
         // }
     });
-}
+};
 
-init_websocket();
+const main = () => {
+    for (let i = 0; i < 10; i++) {
+        let row = [];
+        for (let j = 0; j < 10; j++)
+            row.push(0);
+        field.push(row);
+    }
+    for (let i = 0; i < 10; i++) {
+        let row = [];
+        for (let j = 0; j < 10; j++)
+            row.push(-1);
+        playerFieldShots.push(row);
+    }
+    for (let i = 0; i < 10; i++) {
+        let row = [];
+        for (let j = 0; j < 10; j++)
+            row.push(-1);
+        enemyFieldShots.push(row);
+    }
 
-// playerTurn = true;
-// fight();
+    const get_params = () => {
+        if (location.href.split("#").length == 1) return {};
+        const s = location.href.split("#")[1].split("&");
+        let res = {};
+        for(let i = 0; i < s.length; i++) {
+            const a = s[i].split("=")[0];
+            const b = s[i].split("=")[1];
+            switch (a) {
+                case "game_id":
+                    res.game_id = +b;
+                    break;
+            
+                default:
+                    break;
+            }
+        }
+        return res;
+    }
+
+    const params = get_params();
+    console.log(params);
+
+    game_id = params.game_id;
+
+    init_websocket();
+
+};
+
+main();
